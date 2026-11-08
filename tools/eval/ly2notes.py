@@ -189,7 +189,7 @@ class Parser:
                         self.i += 1
             elif c == '\\':
                 j = self.i + 1
-                w = re.match(r"[A-Za-z!<>()]+|[!<>()]", self.s[j:])
+                w = re.match(r"[A-Za-z]+|[!<>()]", self.s[j:])
                 name = w.group(0) if w else ''
                 # dynamics / spanners attached to the note
                 if name in ('(', ')', '<', '>', '!') or name in ('f', 'p', 'pp', 'ppp', 'mf', 'mp', 'ff', 'fff', 'sf', 'sfz', 'fp', 'fz', 'cresc', 'decresc', 'dim',

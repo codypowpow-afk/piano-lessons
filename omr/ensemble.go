@@ -10,6 +10,13 @@ import (
 // are combined by voting, which cancels most single-pass mistakes.
 var passScales = []float64{20}
 
+// voting thresholds (0 = defaults); see analyzeEnsemble
+var voteKeep, voteAdd = 0, 0
+
+// SetVoting overrides how many passes must agree to keep a base-pass notehead
+// and to add a notehead the base pass missed.
+func SetVoting(keep, add int) { voteKeep, voteAdd = keep, add }
+
 // SetPasses chooses the analysis resolutions. A single value is a quick
 // one-pass read; several values give the slower, more accurate consensus read.
 func SetPasses(scales ...float64) {
@@ -20,10 +27,10 @@ func SetPasses(scales ...float64) {
 }
 
 // Thorough reads each page at four resolutions and votes.
-func Thorough() { SetPasses(18, 20, 22.5, 25.5) }
+func Thorough() { SetPasses(18, 20, 22.5, 25.5); SetVoting(1, 2) }
 
 // Quick reads each page once.
-func Quick() { SetPasses(20) }
+func Quick() { SetPasses(20); SetVoting(0, 0) }
 
 type candidate struct {
 	h    *Head
@@ -109,6 +116,9 @@ func analyzeEnsemble(full *Bitmap) *PageResult {
 		return base
 	}
 	need := (used + 1) / 2 // keep base heads seen by at least half the passes
+	if voteKeep > 0 {
+		need = voteKeep
+	}
 	var out []*Head
 	for _, h := range base.Heads {
 		t := tl[h]
@@ -130,7 +140,11 @@ func analyzeEnsemble(full *Bitmap) *PageResult {
 		out = append(out, h)
 	}
 	for _, c := range cands {
-		if c.n >= used-1 && c.n >= 2 { // seen by all the other passes
+		addNeed := used - 1
+		if voteAdd > 0 {
+			addNeed = voteAdd
+		}
+		if c.n >= addNeed && c.n >= 1 { // seen by (all) the other passes
 			c.h.Pos = int(math.Round(base.Staves[c.h.Staff].Pos(c.h.X, c.h.Y)))
 			out = append(out, c.h)
 		}

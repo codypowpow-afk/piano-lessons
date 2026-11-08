@@ -8,6 +8,8 @@ import (
 // findOttava detects "8 . . . . . . loco" (8va) lines above a staff: a short
 // glyph followed by a chain of evenly spaced dots. Heads on that staff
 // between the 8 and the last dot sound an octave higher.
+var ottavaContinue = false
+
 func (pr *PageResult) findOttava() {
 	sp := pr.Space
 	_, comps := label(pr.Clean)
@@ -20,6 +22,7 @@ func (pr *PageResult) findOttava() {
 	}
 	sort.Slice(dots, func(i, j int) bool { return dots[i].x < dots[j].x })
 	used := make([]bool, len(dots))
+	var ottY []float64
 	for i := range dots {
 		if used[i] {
 			continue
@@ -81,10 +84,25 @@ func (pr *PageResult) findOttava() {
 			}
 		}
 		if start == x0 {
-			continue // no 8: probably a different dotted line
+			// no 8: a continuation of an 8va line that was broken by a gap?
+			cont := false
+			for k, rg := range pr.Ottava {
+				if !ottavaContinue {
+					break
+				}
+				if pr.OttavaSt[k] == st && x0 > rg[1]-sp && x0-rg[1] < sp*4 && math.Abs(y-ottY[k]) < sp*0.5 {
+					pr.Ottava[k][1] = math.Max(rg[1], x1+sp*0.8)
+					cont = true
+				}
+			}
+			if !cont {
+				continue // no 8: probably a different dotted line
+			}
+			continue
 		}
 		pr.Ottava = append(pr.Ottava, [2]float64{start - sp*0.5, x1 + sp*0.8})
 		pr.OttavaSt = append(pr.OttavaSt, st)
+		ottY = append(ottY, y)
 	}
 	for k, r := range pr.Ottava {
 		for _, h := range pr.Heads {

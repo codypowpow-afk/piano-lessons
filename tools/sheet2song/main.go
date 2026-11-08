@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +23,9 @@ func main() {
 	title := flag.String("title", "", "title (default: file name)")
 	space := flag.Float64("space", 0, "analysis staff space in px (default: the reader's own)")
 	quick := flag.Bool("quick", false, "one analysis pass instead of the multi-pass consensus read")
+	keep := flag.Int("keep", 0, "votes needed to keep a notehead (thorough mode)")
+	add := flag.Int("add", 0, "votes needed to add a missed notehead (thorough mode)")
+	passes := flag.String("passes", "", "comma-separated analysis resolutions, e.g. 17,18.5,20,21.5,23,25")
 	flag.Parse()
 	omr.Thorough()
 	if *quick {
@@ -30,6 +34,19 @@ func main() {
 	if *space > 0 {
 		omr.SetWorkSpace(*space)
 		omr.SetPasses(*space)
+	}
+	if *keep > 0 || *add > 0 {
+		omr.SetVoting(*keep, *add)
+	}
+	if *passes != "" {
+		var sc []float64
+		for _, f := range strings.Split(*passes, ",") {
+			v, err := strconv.ParseFloat(strings.TrimSpace(f), 64)
+			if err == nil {
+				sc = append(sc, v)
+			}
+		}
+		omr.SetPasses(sc...)
 	}
 	path := flag.Arg(0)
 	data, err := os.ReadFile(path)

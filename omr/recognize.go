@@ -76,6 +76,8 @@ type PageResult struct {
 // workSpace is the staff space (pixels) pages are scaled to for analysis.
 var workSpace = 20.0
 
+var smallLedgers, smallAccidentals = false, false
+
 // SetWorkSpace changes the analysis resolution (staff space in pixels).
 func SetWorkSpace(sp float64) { workSpace = sp }
 
@@ -1409,12 +1411,17 @@ func (pr *PageResult) fullResAccidentals() {
 		x0, x1   int
 		top, bot int
 	}
+	spFull := sp
 	for _, h := range pr.Heads {
+		sp := spFull
 		if h.Small {
-			continue
+			if !smallAccidentals {
+				continue
+			}
+			sp = spFull * 0.75 // cue-size notes have cue-size accidentals
 		}
 		hx, hy := h.X*f, h.Y*f
-		hw := math.Max(h.W/2, pr.Space*0.6) * f
+		hw := math.Max(h.W/2, sp/f*0.6) * f
 		xr := int(hx - hw - sp*0.06)
 		xl := int(hx - hw - sp*2.0)
 		for _, o := range pr.Heads {
@@ -1643,8 +1650,12 @@ func (pr *PageResult) requireLedgers() {
 		yc := st.YOfPos(h.X, float64(pos))
 		for dy := -sp * 0.22; dy <= sp*0.22; dy += 1 {
 			y := int(yc + dy)
+			need := sp * 1.45
+			if h.Small && smallLedgers {
+				need = sp * 0.95
+			}
 			for dx := -sp * 0.5; dx <= sp*0.5; dx += 2 {
-				if float64(pr.hrun(int(h.X+dx), y)) >= sp*1.45 {
+				if float64(pr.hrun(int(h.X+dx), y)) >= need {
 					return true
 				}
 			}

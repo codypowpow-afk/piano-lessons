@@ -138,21 +138,31 @@ Other accuracy work in 1.2:
   with its accidental is split by where the ink is, not down the middle.
 
 ### How good is it (Chopin Op. 9 scan, measured)
-Measured with `tools/eval` against the Mutopia editions (an independent typesetting
-of the same music), counting matching notes per hand:
+Measured with `tools/eval` against the Mutopia edition of No. 2 (an independent
+typesetting of the same music), counting matching notes per hand (F1 of precision
+and recall). The reference converter had a bug that broke bars 21–34 until
+2026-11-07; the numbers below use the fixed reference.
 
-| | 1.1 | 1.2 (thorough) |
+| | whole No. 2 | bars 1–20 |
 |---|---|---|
-| No. 2, bars 1–20 (reference reliable) | 83.0 % | 86.7 % |
-| No. 2, whole piece | 75.5 % | 79.1 % |
+| 1.1 (one pass) | 80.0 % | 83.0 % |
+| 1.2 (4 passes + fixes) | 83.0 % | 86.7 % |
+| 6 or 8 passes | 83.1–83.3 % | 87.2 % |
+| current (4 passes, looser vote) | 83.4 % | 86.7 % |
 
-The No. 2 numbers after bar 20 are held down partly by the reference converter and
-the cadenza (small notes under 8va). No. 1's Mutopia edition differs from this scan
-(different voicing in places), so it is only a rough check (35.6 % → 37.2 %).
+**More passes do not get past ~83 %.** When the reader outputs a note it is right
+about 89 % of the time; the gap is notes that *no* pass detects at any resolution, so
+voting cannot recover them. Where the remaining errors are (whole No. 2, ~1,250 notes):
+- ~60 missed notes in the **cadenza** (bar 32: a long run of cue-size notes on ledger
+  lines under 8va, each with ♭/♮). Simply accepting smaller noteheads added more wrong
+  notes than right ones; it needs a dedicated cue-note detector.
+- ~60 **missed accidentals** (naturals/flats touching chord notes and runs).
+- ~55 other missed notes in **dense runs** (32nd-note chromatic runs, ornaments) and
+  inner chord notes, plus ~12 octave and ~15 position errors.
+Getting to 90 % means fixing the first two of these, not more passes.
 
-What still goes wrong most: missed accidentals (now ~25 in No. 2's first 20 bars),
-notes missed or added in dense ornaments and chords, the small-note cadenza, and
-rhythm (timing within a bar is still by spacing).
+No. 1's Mutopia edition differs from this scan (different voicing), and its converted
+reference still has timing problems, so it is not used as a measure.
 - Staves 144/144, systems 72/72, pieces 3/3, each piece's key right (5♭, 3♭, 5♯).
 - Bars: No. 2 reads as 35 bars = pickup + 34, matching the score.
 - Vector PDFs (exported from notation software) have no page images: the app says so and
