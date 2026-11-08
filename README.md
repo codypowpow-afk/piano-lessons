@@ -11,7 +11,8 @@ and it turns the notes into **falling blocks that land on the keys you need to p
 
 - **Open:** drag a file onto the window, use **Open file…** (`Ctrl+O`), or drop the file onto the exe.
   - **Scanned PDF** or **page images (PNG/JPG)**: read by the built-in sheet-music reader (no
-    other software needed; a 12-page score takes about 10 s).
+    other software needed). Each page is read four times at different resolutions and the
+    results are voted on, for accuracy; a 12-page score takes about 30 s.
   - **MIDI** and **MusicXML (.musicxml / .mxl)**: exact, use these when you have them.
 - Comes with **Chopin's Nocturnes Op. 9** (all three), read from a scanned PDF.
 - Right hand is teal, left hand amber. Each hand has its own switch: **You** (you play it),

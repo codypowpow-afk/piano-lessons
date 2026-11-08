@@ -54,10 +54,12 @@ omr/imgops.go               Downscale, run stats, integral image, labelling, hol
 omr/staff.go                Staff-line detection (strip-wise, warp tolerant), line removal
 omr/recognize.go            Clefs, key signatures, noteheads, stems, barlines, accidentals
 omr/ottava.go               "8 . . . . loco" detection
+omr/ensemble.go             Thorough mode: several passes per page + voting
 omr/build.go                Pages -> systems -> pieces -> measures -> timed notes
 tools/sheet2song/           CLI: PDF -> songs JSON, prints the first bars of each piece
 tools/omrdebug/             CLI: draws everything the reader found on one page into a PNG
 tools/winres/               Regenerates rsrc_windows_amd64.syso
+tools/eval/                 Accuracy measurement: LilyPond reference + alignment scorer
 ```
 
 ---
@@ -110,16 +112,49 @@ Classical, rule-based OMR. Each page is scaled so a staff space is 20 px, then:
     lengthened. A note lasts until the next onset in the same staff and stem voice.
 11. **Pieces**: an indented first system starts a new piece.
 
-### How good is it (Chopin Op. 9 scan)
-- Staves 144/144, systems 72/72, pieces 3/3, and each piece's key right (5♭, 3♭, 5♯).
-  Per-system key readings are smoothed; No. 3's 2-sharp middle section is only partly caught.
-- Bars: No. 2 reads as 35 bars, which matches the score (pickup + 34). No. 1 reads as 81 and
-  No. 3 as 150; a few barlines are missed there, which merges two bars into one.
-- Melody and chord noteheads: the large majority. No. 2's opening bars read exactly
-  (B♭4 | G5 G5 F5 G5 F5 E♭5 B♭4 | … | F5 G5 D5 E♭5 C5).
-- Weak spots: accidentals that touch other symbols (many are still missed), noteheads fused
-  with beams, ties (a tied note is asked for twice), triplets/irregular rhythms (timing is by
-  spacing), mid-line clef changes, grace-note timing.
+### Thorough mode: several passes and a vote (since 1.2)
+
+By default each page is read **four times**, at different analysis resolutions
+(staff space 18, 20, 22.5 and 25.5 px). Every pass is a complete, independent read.
+The passes are matched notehead by notehead:
+- a notehead from the main (20 px) pass is kept if at least half the passes saw it;
+- a notehead the main pass missed is added if all the other passes saw it;
+- the staff position is a majority vote; an accidental seen by two passes wins.
+
+This cancels most one-off mistakes from a single resolution. It costs about 3× the
+time (a 12-page score: ~10 s → ~30 s). `omr.Quick()` / `sheet2song -quick` give the
+old one-pass read.
+
+Other accuracy work in 1.2:
+- **Accidentals at full resolution**: the area left of every notehead is re-read on
+  the original scan, where sharp/flat/natural strokes are still crisp.
+- **Ties**: a thin arc between two same-pitch noteheads holds the first note instead
+  of asking for it twice.
+- **Ledger rule**: a note two or more steps outside the staff must sit on a ledger
+  line; this removes "Ped." marks, fingering and dynamics read as notes.
+- **Stems must touch their notehead**: a chord note no longer borrows the next chord's
+  stem (which mistimed it).
+- **Chord stacks** place their outer notes from the blob's edges; a notehead fused
+  with its accidental is split by where the ink is, not down the middle.
+
+### How good is it (Chopin Op. 9 scan, measured)
+Measured with `tools/eval` against the Mutopia editions (an independent typesetting
+of the same music), counting matching notes per hand:
+
+| | 1.1 | 1.2 (thorough) |
+|---|---|---|
+| No. 2, bars 1–20 (reference reliable) | 83.0 % | 86.7 % |
+| No. 2, whole piece | 75.5 % | 79.1 % |
+
+The No. 2 numbers after bar 20 are held down partly by the reference converter and
+the cadenza (small notes under 8va). No. 1's Mutopia edition differs from this scan
+(different voicing in places), so it is only a rough check (35.6 % → 37.2 %).
+
+What still goes wrong most: missed accidentals (now ~25 in No. 2's first 20 bars),
+notes missed or added in dense ornaments and chords, the small-note cadenza, and
+rhythm (timing within a bar is still by spacing).
+- Staves 144/144, systems 72/72, pieces 3/3, each piece's key right (5♭, 3♭, 5♯).
+- Bars: No. 2 reads as 35 bars = pickup + 34, matching the score.
 - Vector PDFs (exported from notation software) have no page images: the app says so and
   suggests MIDI/MusicXML. JBIG2 and JPEG 2000 images are not decoded yet (export pages as PNG).
 

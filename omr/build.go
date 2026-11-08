@@ -95,7 +95,11 @@ func readWith(n int, page func(i int) *Bitmap, title string, prog Progress) *Res
 			res.Pages[i] = pr
 			done++
 			if prog != nil {
-				prog(done, n, fmt.Sprintf("Reading music: page %d of %d", done, n))
+				msg := fmt.Sprintf("Reading music: page %d of %d", done, n)
+				if len(passScales) > 1 {
+					msg = fmt.Sprintf("Reading music: page %d of %d (%d passes per page, then voting)", done, n, len(passScales))
+				}
+				prog(done, n, msg)
 			}
 			mu.Unlock()
 		}(i)
@@ -302,6 +306,7 @@ func buildSong(sys []*sysRef, title string) *score.Song {
 	}
 	med := median(counts)
 	L := song.BeatsPer
+	noteOf := map[*Head]int{}
 	t0 := 0.0
 	for mi, m := range ms {
 		pr := m.s.pr
@@ -386,6 +391,16 @@ func buildSong(sys []*sysRef, title string) *score.Song {
 				if p < 21 || p > 108 {
 					continue
 				}
+				if h.TiedIn && h.tiedFrom != nil {
+					if idx, ok := noteOf[h.tiedFrom]; ok {
+						// a tie: hold the earlier note instead of striking again
+						n := &song.Notes[idx]
+						n.Dur = math.Max(n.Dur, t0+c.t+dur-n.Start)
+						noteOf[h] = idx
+						continue
+					}
+				}
+				noteOf[h] = len(song.Notes)
 				song.Notes = append(song.Notes, score.Note{
 					Pitch: p, Start: t0 + c.t, Dur: dur, Hand: hand, Measure: len(song.Measures) - 1,
 					Vel: 0.7, Page: m.s.page + 1, X: float32(h.X), Y: float32(h.Y),

@@ -20,7 +20,17 @@ func main() {
 	out := flag.String("o", "", "output JSON file")
 	show := flag.Int("show", 0, "print the first N measures of each piece")
 	title := flag.String("title", "", "title (default: file name)")
+	space := flag.Float64("space", 0, "analysis staff space in px (default: the reader's own)")
+	quick := flag.Bool("quick", false, "one analysis pass instead of the multi-pass consensus read")
 	flag.Parse()
+	omr.Thorough()
+	if *quick {
+		omr.Quick()
+	}
+	if *space > 0 {
+		omr.SetWorkSpace(*space)
+		omr.SetPasses(*space)
+	}
 	path := flag.Arg(0)
 	data, err := os.ReadFile(path)
 	if err != nil {

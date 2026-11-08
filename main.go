@@ -25,11 +25,12 @@ import (
 	"golang.org/x/image/font/gofont/gobold"
 	"golang.org/x/image/font/gofont/goregular"
 
-	"github.com/codypowpow-afk/piano-player/assets"
 	"github.com/codypowpow-afk/piano-lessons/internal/appicon"
 	"github.com/codypowpow-afk/piano-lessons/internal/lesson"
 	"github.com/codypowpow-afk/piano-lessons/internal/midiin"
+	"github.com/codypowpow-afk/piano-lessons/omr"
 	"github.com/codypowpow-afk/piano-lessons/score"
+	"github.com/codypowpow-afk/piano-player/assets"
 	"github.com/codypowpow-afk/piano-player/synth"
 )
 
@@ -1120,6 +1121,7 @@ func main() {
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetWindowIcon([]image.Image{appicon.Image(16), appicon.Image(32), appicon.Image(48)})
 	ebiten.SetTPS(240)
+	omr.Thorough() // read each page several times and vote: slower, more accurate
 	g := newGame()
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)

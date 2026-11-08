@@ -14,20 +14,21 @@ const (
 
 // Head is one recognised notehead.
 type Head struct {
-	X, Y    float64 // centre (working resolution)
-	Staff   int     // staff index on the page
-	Pos     int     // staff position: half-spaces above the bottom line
-	Hollow  bool
-	Small   bool
-	StemX   float64
-	StemDir int // +1 up, -1 down, 0 none
-	Acc     int // explicit accidental: 0 none, 1 sharp, -1 flat, 2 natural
-	OnsetX  float64
-	W       float64
-	Octave  int // 8va shift in octaves
-	merged  bool
-	Pass    int
-	TiedIn  bool
+	X, Y     float64 // centre (working resolution)
+	Staff    int     // staff index on the page
+	Pos      int     // staff position: half-spaces above the bottom line
+	Hollow   bool
+	Small    bool
+	StemX    float64
+	StemDir  int // +1 up, -1 down, 0 none
+	Acc      int // explicit accidental: 0 none, 1 sharp, -1 flat, 2 natural
+	OnsetX   float64
+	W        float64
+	Octave   int // 8va shift in octaves
+	merged   bool
+	Pass     int
+	tiedFrom *Head
+	TiedIn   bool
 }
 
 // Accidental glyph found on the page.
@@ -66,11 +67,17 @@ type PageResult struct {
 
 	closed      *Bitmap
 	filled      *Bitmap
+	full        *Bitmap // original page (only during analysis)
+	fscale      float64 // full-resolution pixels per working pixel
 	closedLab   []int32
 	closedComps []*Component
 }
 
-const workSpace = 20.0
+// workSpace is the staff space (pixels) pages are scaled to for analysis.
+var workSpace = 20.0
+
+// SetWorkSpace changes the analysis resolution (staff space in pixels).
+func SetWorkSpace(sp float64) { workSpace = sp }
 
 // experimentalPasses enables extra notehead passes for heads fused with beams
 // (they currently add more false hits than they find).
@@ -80,14 +87,26 @@ var debugKey = false
 
 // AnalyzePage runs recognition on one full-resolution page bitmap.
 func AnalyzePage(full *Bitmap) *PageResult {
+	if len(passScales) <= 1 {
+		pr := analyzeAt(full, workSpace)
+		pr.findTies()
+		return pr
+	}
+	return analyzeEnsemble(full)
+}
+
+// analyzeAt runs one complete recognition pass at the given analysis
+// resolution (staff space in pixels).
+func analyzeAt(full *Bitmap, ws float64) *PageResult {
 	_, sp := runStats(full)
 	if sp < 6 {
 		return &PageResult{}
 	}
-	b := Downscale(full, float64(sp)/workSpace)
+	b := Downscale(full, float64(sp)/ws)
 	thick, space := runStats(b)
 	staves := findStaves(b, thick, space)
-	pr := &PageResult{Img: b, Thick: thick, Staves: staves}
+	pr := &PageResult{Img: b, Thick: thick, Staves: staves, full: full, fscale: float64(sp) / ws}
+	defer func() { pr.full = nil }()
 	if len(staves) == 0 {
 		return pr
 	}
@@ -104,9 +123,11 @@ func AnalyzePage(full *Bitmap) *PageResult {
 	pr.findClefsAndKeys()
 	pr.findAccidentals()
 	pr.localAccidentals()
+	pr.fullResAccidentals()
 	pr.findOttava()
 	pr.dropPreamble()
 	pr.assignPositions()
+	pr.requireLedgers()
 	return pr
 }
 
@@ -329,8 +350,7 @@ func (pr *PageResult) findHeadsPass(src *Bitmap, vk float64, mode int) {
 		}
 		var parts [][2]int // x ranges
 		if w > sp*1.95 {
-			mid := c.X0 + c.W()/2
-			parts = [][2]int{{c.X0, mid}, {mid, c.X1}}
+			parts = headWindows(lab, o.W, c, sp)
 		} else {
 			parts = [][2]int{{c.X0, c.X1}}
 		}
@@ -413,6 +433,10 @@ func (pr *PageResult) findHeadsPass(src *Bitmap, vk float64, mode int) {
 						cys = append(cys, float64(y0)+unit*0.475+float64(i)*(ph-unit*0.95)/float64(n-1))
 					}
 				}
+				// the outermost heads sit against the blob's edges: use those
+				sort.Float64s(cys)
+				cys[0] = float64(y0) + unit*0.475
+				cys[len(cys)-1] = float64(y1) - unit*0.475
 			}
 			for _, cy := range cys {
 				// centre x of the ink in this row band
@@ -525,7 +549,13 @@ func (pr *PageResult) findStems() {
 			unit = sp * 0.72
 		}
 		bestLen, bestX, bestTop, bestBot := 0, 0, 0, 0
+		hw := clampf(h.W/2, unit*0.5, unit*0.78)
 		for x := int(h.X - unit*0.95); x <= int(h.X+unit*0.95); x++ {
+			// a stem touches the head's left or right edge
+			fx := float64(x)
+			if math.Min(math.Abs(fx-(h.X-hw)), math.Abs(fx-(h.X+hw))) > unit*0.24 {
+				continue
+			}
 			// the stem must touch the head's row band
 			for y := int(h.Y - unit*0.45); y <= int(h.Y+unit*0.45); y += 2 {
 				s, e := pr.vrun(x, y)
@@ -603,7 +633,7 @@ func (pr *PageResult) findStems() {
 			// a whole note: wide, near its staff
 			s := pr.Staves[h.Staff]
 			pos := s.Pos(h.X, h.Y)
-			if h.W < sp*1.3 || pos < -6 || pos > 14 {
+			if h.W < sp*1.3 || pos < -4 || pos > 12 {
 				continue
 			}
 			h.OnsetX = h.X
@@ -1328,4 +1358,311 @@ func (pr *PageResult) localAccidentals() {
 			}
 		}
 	}
+}
+
+// fullResAccidentals re-examines the space left of each notehead in the
+// original, full-resolution scan, where the thin strokes of sharps, flats and
+// naturals are still intact.
+func (pr *PageResult) fullResAccidentals() {
+	if pr.full == nil {
+		return
+	}
+	fb := pr.full
+	f := pr.fscale
+	sp := pr.Space * f // staff space in full-res pixels
+	trace := func(x, y int) (int, int) {
+		if fb.At(x, y) == 0 {
+			return y, y - 1
+		}
+		maxGap := int(sp*0.08) + 1
+		run := func(dir int) int {
+			cx, cy, last, gap := x, y, y, 0
+			for {
+				ny := cy + dir
+				if ny < 0 || ny >= fb.H {
+					return last
+				}
+				switch {
+				case fb.At(cx, ny) == 1:
+				case fb.At(cx-1, ny) == 1:
+					cx--
+				case fb.At(cx+1, ny) == 1:
+					cx++
+				default:
+					gap++
+					if gap > maxGap {
+						return last
+					}
+					cy = ny
+					continue
+				}
+				if abs(cx-x) > int(sp*0.12)+1 {
+					return last
+				}
+				gap = 0
+				cy, last = ny, ny
+			}
+		}
+		return run(-1), run(1)
+	}
+	type stroke struct {
+		x0, x1   int
+		top, bot int
+	}
+	for _, h := range pr.Heads {
+		if h.Small {
+			continue
+		}
+		hx, hy := h.X*f, h.Y*f
+		hw := math.Max(h.W/2, pr.Space*0.6) * f
+		xr := int(hx - hw - sp*0.06)
+		xl := int(hx - hw - sp*2.0)
+		for _, o := range pr.Heads {
+			if o != h && o.Staff == h.Staff && o.X < h.X-h.W/2 && math.Abs(o.Y-h.Y) < pr.Space*2.5 {
+				if ox := int((o.X + math.Max(o.W/2, pr.Space*0.6)) * f); ox > xl && ox < xr {
+					xl = ox
+				}
+			}
+		}
+		if xr-xl < int(sp*0.4) {
+			continue
+		}
+		var strokes []stroke
+		for x := xr; x >= xl; x-- {
+			bt, bb := 0, -1
+			for dy := -0.45; dy <= 0.45; dy += 0.075 {
+				t, b := trace(x, int(hy+dy*sp))
+				if b-t > bb-bt {
+					bt, bb = t, b
+				}
+			}
+			l := float64(bb - bt + 1)
+			if l < sp*1.3 || l > sp*3.5 {
+				continue
+			}
+			if n := len(strokes); n > 0 && strokes[n-1].x0-x <= int(sp*0.06)+1 {
+				st := &strokes[n-1]
+				st.x0 = x
+				if bb-bt > st.bot-st.top {
+					st.top, st.bot = bt, bb
+				}
+				continue
+			}
+			strokes = append(strokes, stroke{x, x, bt, bb})
+		}
+		// strokes wider than ~0.3 sp are not accidental strokes
+		var ss []stroke
+		for _, st := range strokes {
+			if float64(st.x1-st.x0) <= sp*0.3 {
+				ss = append(ss, st)
+			}
+		}
+		if len(ss) == 0 {
+			continue
+		}
+		a := ss[0] // nearest to the head (right stroke)
+		at, ab := float64(a.top), float64(a.bot)
+		kind := 0
+		if len(ss) >= 2 {
+			b := ss[1]
+			gap := float64(a.x0 - b.x1)
+			bt, bb := float64(b.top), float64(b.bot)
+			if gap >= sp*0.15 && gap <= sp*0.7 {
+				switch {
+				case bt < hy-sp*0.5 && bb > hy-sp*0.6 && bb < hy+sp*1.0 &&
+					at > hy-sp*1.0 && at < hy+sp*0.6 && ab > hy+sp*0.5 &&
+					at-bt > sp*0.45 && ab-bb > sp*0.45:
+					kind = 2 // natural
+				case at < hy-sp*0.45 && bt < hy-sp*0.45 && ab > hy+sp*0.45 && bb > hy+sp*0.45 &&
+					math.Abs(at-bt) < sp*0.7 && math.Abs(ab-bb) < sp*0.7:
+					kind = 1 // sharp
+				}
+			}
+		}
+		if kind == 0 && ab > hy+sp*0.1 && ab < hy+sp*0.95 && at < hy-sp*1.1 {
+			// flat: bowl to the right of the stroke near the head's height,
+			// nothing at the top of the stroke on that side
+			bowl, topInk, n1, n2 := 0, 0, 0, 0
+			for x := a.x1 + int(sp*0.06) + 1; x <= a.x1+int(sp*0.6); x++ {
+				for y := int(hy - sp*0.15); y <= int(hy+sp*0.35); y++ {
+					bowl += int(fb.At(x, y))
+					n1++
+				}
+				for y := int(at + sp*0.1); y <= int(at+sp*0.6); y++ {
+					topInk += int(fb.At(x, y))
+					n2++
+				}
+			}
+			if n1 > 0 && n2 > 0 && float64(bowl)/float64(n1) > 0.18 && float64(topInk)/float64(n2) < 0.12 {
+				kind = -1
+			}
+		}
+		if kind != 0 && h.Acc == 0 {
+			h.Acc = kind
+		}
+	}
+}
+
+// findTies marks a notehead as tied from the previous same-pitch notehead on
+// its staff when a thin arc runs between them, just above or below.
+func (pr *PageResult) findTies() {
+	sp := pr.Space
+	byStaff := map[int][]*Head{}
+	for _, h := range pr.Heads {
+		byStaff[h.Staff] = append(byStaff[h.Staff], h)
+	}
+	for _, hs := range byStaff {
+		sort.Slice(hs, func(i, j int) bool { return hs[i].X < hs[j].X })
+		for i, h1 := range hs {
+			if h1.Small {
+				continue
+			}
+			// the next notehead to the right on the same position
+			var h2 *Head
+			for _, c := range hs[i+1:] {
+				if c.X-h1.X > sp*9 {
+					break
+				}
+				if c.Pos == h1.Pos && c.X-h1.X > sp*1.4 && !c.Small {
+					h2 = c
+					break
+				}
+			}
+			if h2 == nil {
+				continue
+			}
+			// no other onset of this staff strictly between them at a nearby pitch
+			between := false
+			for _, c := range hs[i+1:] {
+				if c == h2 {
+					break
+				}
+				if c.X > h1.X+sp*0.8 && c.X < h2.X-sp*0.8 && abs(c.Pos-h1.Pos) <= 1 {
+					between = true
+					break
+				}
+			}
+			if between {
+				continue
+			}
+			x0 := int(h1.X + math.Max(h1.W/2, sp*0.6) + sp*0.15)
+			x1 := int(h2.X - math.Max(h2.W/2, sp*0.6) - sp*0.15)
+			if x1-x0 < int(sp*0.6) {
+				continue
+			}
+			for _, side := range []float64{-1, 1} {
+				ok, tot := 0, 0
+				for x := x0; x <= x1; x++ {
+					tot++
+					// a thin run of ink in the band beside the heads' height
+					y0 := int(h1.Y + side*sp*0.1)
+					y1 := int(h1.Y + side*sp*1.75)
+					if y0 > y1 {
+						y0, y1 = y1, y0
+					}
+					for y := y0; y <= y1; y++ {
+						if pr.Clean.At(x, y) == 1 {
+							t, b := y, y
+							for pr.Clean.At(x, t-1) == 1 && y-t < int(sp) {
+								t--
+							}
+							for pr.Clean.At(x, b+1) == 1 && b-y < int(sp) {
+								b++
+							}
+							if float64(b-t+1) <= sp*0.4 {
+								ok++
+								break
+							}
+							y = b
+						}
+					}
+				}
+				if tot > 0 && float64(ok) >= float64(tot)*0.85 {
+					h2.TiedIn = true
+					h2.tiedFrom = h1
+					break
+				}
+			}
+		}
+	}
+}
+
+// headWindows splits a wide blob (a notehead touching an accidental, or two
+// heads side by side) into notehead-sized column ranges with the most ink.
+func headWindows(lab []int32, stride int, c *Component, sp float64) [][2]int {
+	id := int32(c.ID)
+	cols := make([]int, c.W())
+	for x := c.X0; x < c.X1; x++ {
+		for y := c.Y0; y < c.Y1; y++ {
+			if lab[y*stride+x] == id {
+				cols[x-c.X0]++
+			}
+		}
+	}
+	win := int(sp * 1.25)
+	if win >= len(cols) {
+		return [][2]int{{c.X0, c.X1}}
+	}
+	sums := make([]int, len(cols)-win+1)
+	for i := range sums {
+		for k := i; k < i+win; k++ {
+			sums[i] += cols[k]
+		}
+	}
+	var out [][2]int
+	used := make([]bool, len(sums))
+	for len(out) < 2 {
+		best, bi := 0, -1
+		for i, v := range sums {
+			if !used[i] && v > best {
+				best, bi = v, i
+			}
+		}
+		if bi < 0 || float64(best) < float64(win)*sp*0.55 {
+			break
+		}
+		out = append(out, [2]int{c.X0 + bi, c.X0 + bi + win})
+		for i := max(0, bi-win+1); i < min(len(sums), bi+win); i++ {
+			used[i] = true
+		}
+	}
+	if len(out) == 0 {
+		mid := c.X0 + c.W()/2
+		return [][2]int{{c.X0, mid}, {mid, c.X1}}
+	}
+	return out
+}
+
+// requireLedgers drops "notes" far outside a staff that have no ledger line:
+// a real note two or more steps beyond the staff always sits on or above a
+// ledger line, while text (Ped., dynamics, fingering) does not.
+func (pr *PageResult) requireLedgers() {
+	sp := pr.Space
+	hasLedger := func(h *Head, pos int) bool {
+		st := pr.Staves[h.Staff]
+		yc := st.YOfPos(h.X, float64(pos))
+		for dy := -sp * 0.22; dy <= sp*0.22; dy += 1 {
+			y := int(yc + dy)
+			for dx := -sp * 0.5; dx <= sp*0.5; dx += 2 {
+				if float64(pr.hrun(int(h.X+dx), y)) >= sp*1.45 {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	var out []*Head
+	for _, h := range pr.Heads {
+		ok := true
+		switch {
+		case h.Pos <= -2:
+			ok = hasLedger(h, -2)
+		case h.Pos >= 10:
+			ok = hasLedger(h, 10)
+		}
+		if ok {
+			out = append(out, h)
+		}
+	}
+	pr.Heads = out
 }
