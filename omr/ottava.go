@@ -8,7 +8,7 @@ import (
 // findOttava detects "8 . . . . . . loco" (8va) lines above a staff: a short
 // glyph followed by a chain of evenly spaced dots. Heads on that staff
 // between the 8 and the last dot sound an octave higher.
-var ottavaContinue = false
+var ottavaContinue = true
 
 func (pr *PageResult) findOttava() {
 	sp := pr.Space
@@ -39,6 +39,23 @@ func (pr *PageResult) findOttava() {
 			}
 			chain = append(chain, j)
 			last = d
+		}
+		if len(chain) >= 3 && ottavaContinue {
+			// a short run of dots right after an 8va line extends it
+			cx0, cx1, cy := dots[chain[0]].x, dots[chain[len(chain)-1]].x, dots[chain[0]].y
+			ext := false
+			for k, rg := range pr.Ottava {
+				if cx0 > rg[1]-sp && cx0-rg[1] < sp*20 && math.Abs(cy-ottY[k]) < sp*0.8 {
+					pr.Ottava[k][1] = math.Max(rg[1], cx1+sp*0.8)
+					ext = true
+				}
+			}
+			if ext {
+				for _, k := range chain {
+					used[k] = true
+				}
+				continue
+			}
 		}
 		if len(chain) < 6 {
 			continue
@@ -90,10 +107,19 @@ func (pr *PageResult) findOttava() {
 				if !ottavaContinue {
 					break
 				}
-				if pr.OttavaSt[k] == st && x0 > rg[1]-sp && x0-rg[1] < sp*4 && math.Abs(y-ottY[k]) < sp*0.5 {
+				if pr.OttavaSt[k] == st && x0 > rg[1]-sp && x0-rg[1] < sp*20 && math.Abs(y-ottY[k]) < sp*0.8 {
 					pr.Ottava[k][1] = math.Max(rg[1], x1+sp*0.8)
 					cont = true
 				}
+			}
+			// a dotted line starting right at the beginning of a staff is an
+			// 8va carried over from the previous line of music
+			stS := pr.Staves[st]
+			if !cont && len(chain) >= 6 && x0 < float64(stS.X0)+sp*9 {
+				pr.Ottava = append(pr.Ottava, [2]float64{float64(stS.X0), x1 + sp*0.8})
+				pr.OttavaSt = append(pr.OttavaSt, st)
+				ottY = append(ottY, y)
+				continue
 			}
 			if !cont {
 				continue // no 8: probably a different dotted line

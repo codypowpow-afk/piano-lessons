@@ -137,6 +137,20 @@ Other accuracy work in 1.2:
 - **Chord stacks** place their outer notes from the blob's edges; a notehead fused
   with its accidental is split by where the ink is, not down the middle.
 
+### Cue-note detector and 8va continuation (1.3)
+- **Cue notes** (`omr/cue.go`): small noteheads (cadenzas, grace runs) are searched for
+  on the full-resolution scan, staff by staff, after removing that staff's lines. A small
+  head only counts if it has a stem ending on a beam, and if at least 4 such heads share
+  a beam line (same stem direction, stem ends within 3.5 staff spaces across and 1 up/down).
+  Lone small blobs (dots, fingering, text) never form a group, so they are rejected.
+  Cue notes are exempt from the ledger rule; their accidentals are read at full
+  resolution with the smaller head size in mind.
+- **Cue accidental shapes**: a ♭ has ink only above the head, a ♮/♯ above and below;
+  the shape plus the key signature and earlier accidentals in the bar decides which.
+- **8va continuation**: a dotted 8va line that continues onto the next system (no "8"
+  printed again) or is broken by a note is now followed, so those notes are not read an
+  octave low.
+
 ### How good is it (Chopin Op. 9 scan, measured)
 Measured with `tools/eval` against the Mutopia edition of No. 2 (an independent
 typesetting of the same music), counting matching notes per hand (F1 of precision
@@ -148,18 +162,19 @@ and recall). The reference converter had a bug that broke bars 21–34 until
 | 1.1 (one pass) | 80.0 % | 83.0 % |
 | 1.2 (4 passes + fixes) | 83.0 % | 86.7 % |
 | 6 or 8 passes | 83.1–83.3 % | 87.2 % |
-| current (4 passes, looser vote) | 83.4 % | 86.7 % |
+| 4 passes, looser vote | 83.4 % | 86.7 % |
+| 1.3 (+ cue notes, 8va continuation, cue accidentals) | **85.0 %** | 86.7 % |
 
-**More passes do not get past ~83 %.** When the reader outputs a note it is right
-about 89 % of the time; the gap is notes that *no* pass detects at any resolution, so
-voting cannot recover them. Where the remaining errors are (whole No. 2, ~1,250 notes):
-- ~60 missed notes in the **cadenza** (bar 32: a long run of cue-size notes on ledger
-  lines under 8va, each with ♭/♮). Simply accepting smaller noteheads added more wrong
-  notes than right ones; it needs a dedicated cue-note detector.
-- ~60 **missed accidentals** (naturals/flats touching chord notes and runs).
-- ~55 other missed notes in **dense runs** (32nd-note chromatic runs, ornaments) and
-  inner chord notes, plus ~12 octave and ~15 position errors.
-Getting to 90 % means fixing the first two of these, not more passes.
+**More passes do not get past ~83 %; 1.3's detectors get to 85 %, not yet 90 %.**
+When the reader outputs a note it is right about 89 % of the time; the gap is notes no
+pass detects. Remaining errors on whole No. 2 (~1,250 notes):
+- ~126 **missed notes**: the rest of the cadenza (cue heads touching ledger lines and
+  each other), 32nd-note chromatic runs, ornaments and inner chord notes.
+- ~64 **accidental errors** (a ♮ or ♭ touching a chord note or inside a run is missed or
+  misread).
+- ~60 other: ~13 octave, ~13 staff-position, ~19 extra notes.
+Reaching 90 % needs a better read of crowded heads (separating touching noteheads and
+accidentals), not more passes.
 
 No. 1's Mutopia edition differs from this scan (different voicing), and its converted
 reference still has timing problems, so it is not used as a measure.

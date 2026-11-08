@@ -350,6 +350,18 @@ func buildSong(sys []*sysRef, title string) *score.Song {
 			if v, ok := acc[key]; ok {
 				alter = v
 			}
+			if h.Acc == 0 && h.AccShape != 0 {
+				// a cue-size sign whose kind could not be read: the key decides
+				prev, seen := acc[key]
+				switch {
+				case h.AccShape == 1:
+					h.Acc = -1
+				case keyAlter(step, m.s.key) != 0 || (seen && prev != 0):
+					h.Acc = 2 // cancels the key or an earlier sign in the bar
+				default:
+					h.Acc = 1
+				}
+			}
 			switch h.Acc {
 			case 1:
 				alter = 1

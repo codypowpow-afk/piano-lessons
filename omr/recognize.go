@@ -27,6 +27,7 @@ type Head struct {
 	Octave   int // 8va shift in octaves
 	merged   bool
 	Pass     int
+	AccShape int // cue notes: 1 = flat-like sign (ink above only), 2 = sign above and below
 	tiedFrom *Head
 	TiedIn   bool
 }
@@ -68,6 +69,7 @@ type PageResult struct {
 	closed      *Bitmap
 	filled      *Bitmap
 	full        *Bitmap // original page (only during analysis)
+	cuePass     bool    // this pass looks for cue-size notes
 	fscale      float64 // full-resolution pixels per working pixel
 	closedLab   []int32
 	closedComps []*Component
@@ -107,7 +109,7 @@ func analyzeAt(full *Bitmap, ws float64) *PageResult {
 	b := Downscale(full, float64(sp)/ws)
 	thick, space := runStats(b)
 	staves := findStaves(b, thick, space)
-	pr := &PageResult{Img: b, Thick: thick, Staves: staves, full: full, fscale: float64(sp) / ws}
+	pr := &PageResult{Img: b, Thick: thick, Staves: staves, full: full, fscale: float64(sp) / ws, cuePass: math.Abs(ws-20) < 0.5}
 	defer func() { pr.full = nil }()
 	if len(staves) == 0 {
 		return pr
@@ -122,10 +124,12 @@ func analyzeAt(full *Bitmap, ws float64) *PageResult {
 	pr.findHeads()
 	pr.findStems()
 	pr.findBarlines()
+	pr.findCueHeads()
 	pr.findClefsAndKeys()
 	pr.findAccidentals()
 	pr.localAccidentals()
 	pr.fullResAccidentals()
+	pr.cueAccidentalShapes()
 	pr.findOttava()
 	pr.dropPreamble()
 	pr.assignPositions()
@@ -311,7 +315,7 @@ func (pr *PageResult) findMergedHeads() {
 			}
 		}
 		if !dup {
-			pr.Heads = append(pr.Heads, &Head{X: cx, Y: cy, Staff: st, W: w, merged: true, Pass: 3})
+			pr.Heads = append(pr.Heads, &Head{X: cx, Y: cy, Staff: st, W: w, merged: true, Pass: passMerged})
 		}
 	}
 }
@@ -328,6 +332,8 @@ const (
 	passFilled = iota
 	passHollow
 	passSecond
+	passMerged
+	passCue
 )
 
 func (pr *PageResult) findHeadsPass(src *Bitmap, vk float64, mode int) {
@@ -1415,7 +1421,7 @@ func (pr *PageResult) fullResAccidentals() {
 	for _, h := range pr.Heads {
 		sp := spFull
 		if h.Small {
-			if !smallAccidentals {
+			if !smallAccidentals && h.Pass != passCue {
 				continue
 			}
 			sp = spFull * 0.75 // cue-size notes have cue-size accidentals
@@ -1426,7 +1432,11 @@ func (pr *PageResult) fullResAccidentals() {
 		xl := int(hx - hw - sp*2.0)
 		for _, o := range pr.Heads {
 			if o != h && o.Staff == h.Staff && o.X < h.X-h.W/2 && math.Abs(o.Y-h.Y) < pr.Space*2.5 {
-				if ox := int((o.X + math.Max(o.W/2, pr.Space*0.6)) * f); ox > xl && ox < xr {
+				ohw := math.Max(o.W/2, pr.Space*0.6)
+				if o.Small {
+					ohw = o.W / 2
+				}
+				if ox := int((o.X + ohw) * f); ox > xl && ox < xr {
 					xl = ox
 				}
 			}
@@ -1651,7 +1661,7 @@ func (pr *PageResult) requireLedgers() {
 		for dy := -sp * 0.22; dy <= sp*0.22; dy += 1 {
 			y := int(yc + dy)
 			need := sp * 1.45
-			if h.Small && smallLedgers {
+			if h.Small && (smallLedgers || h.Pass == passCue) {
 				need = sp * 0.95
 			}
 			for dx := -sp * 0.5; dx <= sp*0.5; dx += 2 {
@@ -1666,6 +1676,8 @@ func (pr *PageResult) requireLedgers() {
 	for _, h := range pr.Heads {
 		ok := true
 		switch {
+		case h.Pass == passCue:
+			// beamed cue groups found on the full scan: already well evidenced
 		case h.Pos <= -2:
 			ok = hasLedger(h, -2)
 		case h.Pos >= 10:
@@ -1676,4 +1688,68 @@ func (pr *PageResult) requireLedgers() {
 		}
 	}
 	pr.Heads = out
+}
+
+// cueAccidentalShapes looks for any accidental-like ink just left of a cue
+// note. Cue-size signs are too small and broken for the stroke tests, so only
+// their vertical extent is used: a flat rises above the note, a natural or
+// sharp reaches both above and below it. The key decides which (see build).
+func (pr *PageResult) cueAccidentalShapes() {
+	if pr.full == nil {
+		return
+	}
+	fb := pr.full
+	f := pr.fscale
+	spc := pr.Space * f * 0.75
+	for _, h := range pr.Heads {
+		if h.Pass != passCue || h.Acc != 0 {
+			continue
+		}
+		hx, hy := h.X*f, h.Y*f
+		xr := int(hx - h.W/2*f - spc*0.05)
+		xl := int(hx - h.W/2*f - spc*1.3)
+		for _, o := range pr.Heads {
+			if o != h && o.Staff == h.Staff && o.X < h.X && h.X-o.X < pr.Space*3 {
+				if ox := int((o.X + o.W/2) * f); ox > xl && ox < xr {
+					xl = ox
+				}
+			}
+		}
+		if xr-xl < int(spc*0.3) {
+			continue
+		}
+		// rows with ink that is part of a vertical-ish stroke (not a ledger line)
+		top, bot := math.Inf(1), math.Inf(-1)
+		n := 0
+		for y := int(hy - spc*2.2); y <= int(hy+spc*2.2); y++ {
+			for x := xl; x <= xr; x++ {
+				if fb.At(x, y) == 0 {
+					continue
+				}
+				// vertical run length through this pixel (short window)
+				t, b := y, y
+				for fb.At(x, t-1) == 1 && y-t < int(spc) {
+					t--
+				}
+				for fb.At(x, b+1) == 1 && b-y < int(spc) {
+					b++
+				}
+				if float64(b-t+1) >= spc*0.3 {
+					n++
+					top = math.Min(top, float64(y))
+					bot = math.Max(bot, float64(y))
+				}
+			}
+		}
+		if float64(n) < spc*spc*0.12 {
+			continue
+		}
+		above, below := hy-top, bot-hy
+		switch {
+		case above > spc*0.9 && below > spc*0.7:
+			h.AccShape = 2
+		case above > spc*1.0 && below < spc*0.6:
+			h.AccShape = 1
+		}
+	}
 }
