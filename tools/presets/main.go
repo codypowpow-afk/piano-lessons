@@ -24,11 +24,15 @@ import (
 	"github.com/codypowpow-afk/piano-lessons/score"
 )
 
-// preset describes one built-in song. With no RH/LH tracks the file is a
-// piano score and is read as it is.
+// preset describes one built-in song. With no tracks listed the file is a
+// piano score and is read as it is. Otherwise each hand is made from tracks:
+// rhAll/lhAll take every note of the tracks as written (an arrangement with
+// its own right- and left-hand parts), rh/lh reduce the tracks to a single
+// line (top note for the right hand, bottom note for the left).
 type preset struct {
-	file, title string
-	rh, lh      []int // tracks for the reduction (melody, bass)
+	file, title  string
+	rh, lh       []int
+	rhAll, lhAll []int
 }
 
 type category struct {
@@ -80,16 +84,35 @@ var collection = []category{
 		{file: "peacherine-rag", title: "Joplin — Peacherine Rag"},
 		{file: "pineapple-rag", title: "Joplin — Pineapple Rag"},
 	}},
-	{"Movie & game themes", []preset{
+	{"Movie themes", []preset{
 		{file: "addams-family", title: "The Addams Family", rh: []int{1}, lh: []int{5, 4}},
 		{file: "ghostbusters", title: "Ghostbusters", rh: []int{1, 2}, lh: []int{3, 2}},
 		{file: "james-bond", title: "James Bond Theme", rh: []int{4, 13, 12, 3}, lh: []int{1}},
 		{file: "jurassic-park", title: "Jurassic Park", rh: []int{1, 5, 3}, lh: []int{9, 10, 2}},
 		{file: "star-wars-duel-of-the-fates", title: "Star Wars — Duel of the Fates", rh: []int{1, 9, 7, 4}, lh: []int{3}},
-		{file: "doki-doki-literature-club-main-theme", title: "Doki Doki Literature Club — Main Theme", rh: []int{3, 5, 12, 13, 15}, lh: []int{10}},
+	}},
+	// Synthesia arrangements by FrB (tracks named Right Hand / Left Hand),
+	// in the order of the collection's own DDLC.synthesia file
+	{"Doki Doki Literature Club", []preset{
+		{file: "ddlc-doki-doki-literature-club", title: "Doki Doki Literature Club!", rhAll: []int{3}, lhAll: []int{2}},
+		{file: "ddlc-main-theme-shinkonetcavy", title: "Doki Doki Literature Club! (band version)", rh: []int{3, 5, 12, 13, 15}, lh: []int{10}},
+		{file: "ddlc-ohayou-sayori", title: "Ohayou Sayori!", rh: []int{4, 5}, lh: []int{3}},
+		{file: "ddlc-daijoubu", title: "Daijoubu!", rh: []int{4, 6, 5}, lh: []int{3}},
+		{file: "ddlc-okay-everyone-monika", title: "Okay, Everyone! (Monika)", rhAll: []int{2}, lhAll: []int{3}},
+		{file: "ddlc-play-with-me", title: "Play With Me", rhAll: []int{4}, lhAll: []int{2}},
+		{file: "ddlc-dreams-of-love-and-literature", title: "Dreams of Love and Literature", rhAll: []int{4}, lhAll: []int{2}},
+		{file: "ddlc-my-feelings-easy", title: "My Feelings (easy)", rhAll: []int{2}, lhAll: []int{3}},
+		{file: "ddlc-my-feelings", title: "My Feelings", rhAll: []int{2}, lhAll: []int{3}},
+		{file: "ddlc-my-confession", title: "My Confession", rhAll: []int{3, 4}, lhAll: []int{2}},
+		{file: "ddlc-my-confession-61-keys", title: "My Confession (61 keys)", rhAll: []int{3, 4}, lhAll: []int{2}},
+		{file: "ddlc-sayo-nara", title: "Sayo-nara", rhAll: []int{3}, lhAll: []int{2}},
+		{file: "ddlc-i-still-love-you", title: "I Still Love You", rhAll: []int{3}, lhAll: []int{2}},
+		{file: "ddlc-your-reality", title: "Your Reality", rhAll: []int{3}, lhAll: []int{2}},
+		{file: "ddlc-cant-help-falling-in-love", title: "Can't Help Falling in Love (fan song by OR3O)", rh: []int{3, 2}, lh: []int{2}},
+		{file: "ddlc-doki-doki-forever", title: "Doki Doki Forever (fan song by OR3O)", rh: []int{2, 3, 4, 5, 7}, lhAll: []int{6}},
+		{file: "ddlc-doki-doki-forever-clean", title: "Doki Doki Forever (fan song, clean)", rh: []int{2, 3, 4, 5, 7}, lhAll: []int{6}},
 	}},
 	{"Pop & rock", []preset{
-		{file: "cant-help-falling-in-love", title: "Can't Help Falling in Love", rh: []int{3, 2}, lh: []int{2}},
 		{file: "queen-another-one-bites-the-dust", title: "Queen — Another One Bites the Dust", rh: []int{1, 6}, lh: []int{3}},
 		{file: "queen-bohemian-rhapsody", title: "Queen — Bohemian Rhapsody", rh: []int{6, 1, 2, 9}, lh: []int{4, 3}},
 	}},
@@ -253,6 +276,34 @@ func line(m *smf, tracks []int, top bool, centre int) []note {
 	return out
 }
 
+// all returns every note of the tracks as written, without doubled notes.
+func all(m *smf, tracks []int) []note {
+	var out []note
+	seen := map[[2]int]bool{}
+	for _, t := range tracks {
+		if t >= len(m.tracks) {
+			continue
+		}
+		for _, n := range m.tracks[t] {
+			k := [2]int{n.tick, n.pitch}
+			if !seen[k] && n.dur > 0 {
+				seen[k] = true
+				out = append(out, n)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].tick < out[j].tick })
+	// a note held into a re-strike of the same key ends there
+	last := map[int]int{}
+	for i, n := range out {
+		if j, ok := last[n.pitch]; ok && out[j].tick+out[j].dur > n.tick {
+			out[j].dur = max(1, n.tick-out[j].tick)
+		}
+		last[n.pitch] = i
+	}
+	return out
+}
+
 // octaveTo moves a part by whole octaves so the median pitch of the notes
 // the line will use (the top or bottom note of each onset) is near centre.
 // Notes still off the piano are folded back onto it.
@@ -398,10 +449,25 @@ func main() {
 				log.Fatalf("%s: %v", p.file, err)
 			}
 			perf := performed(m)
-			if p.rh != nil {
-				rh, lh := line(m, p.rh, true, 72), line(m, p.lh, false, 45)
-				data = write(m, rh, lh)
-				src = "MIDI, arranged for piano: melody in the right hand, bass line in the left"
+			if p.rh != nil || p.lh != nil || p.rhAll != nil || p.lhAll != nil {
+				var hands [2][]note
+				lines := false
+				for h, spec := range [2]struct {
+					line, all []int
+					top       bool
+					centre    int
+				}{{p.rh, p.rhAll, true, 72}, {p.lh, p.lhAll, false, 45}} {
+					if spec.all != nil {
+						hands[h] = all(m, spec.all)
+					} else {
+						hands[h] = line(m, spec.line, spec.top, spec.centre)
+						lines = true
+					}
+				}
+				data = write(m, hands[0], hands[1])
+				if lines {
+					src = "MIDI, arranged for piano: melody in the right hand, bass line in the left"
+				}
 			}
 			s, err := score.ReadMIDI(data, p.title)
 			if err != nil {

@@ -80,10 +80,13 @@ MIDI tempo changes (since 1.4) are folded into the note times: a song keeps one 
 opening one) and later passages are stretched or squeezed, so playback matches the file.
 
 ### Built-in songs (1.4)
-`go run ./tools/presets` turns `presets/midi/*.mid` into `presets/songs.json.gz` (about 280 KB,
-43,000 notes), loaded by `library.go` as one library entry per category. The list, the titles
+`go run ./tools/presets` turns `presets/midi/*.mid` into `presets/songs.json.gz` (about 350 KB,
+55,000 notes), loaded by `library.go` as one library entry per category. The list, the titles
 and the categories are in `tools/presets/main.go`.
 - **Piano files** (one track per hand) are used as they are.
+- **Arrangements with hand tracks** (the Doki Doki Literature Club set: Synthesia files with
+  "Right Hand" / "Left Hand" tracks) use those tracks as written (`rhAll` / `lhAll`); the
+  extra instrument tracks (bass, bells, drums) are left out.
 - **Band / orchestra files** are arranged for two hands: the listed melody tracks become the
   right hand and the bass tracks the left. Tracks are in priority order and chosen per bar, so
   the tune follows whichever instrument has it; only the top (right) or bottom (left) note of

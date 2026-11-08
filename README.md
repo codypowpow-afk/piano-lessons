@@ -15,10 +15,12 @@ and it turns the notes into **falling blocks that land on the keys you need to p
     results are voted on, for accuracy; small cue notes (cadenzas, grace runs) are found on the
     full-resolution scan. A 12-page score takes about 30–40 s.
   - **MIDI** and **MusicXML (.musicxml / .mxl)**: exact, use these when you have them.
-- Comes with **51 built-in songs** in the **Library** (`F10`), grouped and scrollable:
+- Comes with **66 built-in songs** in the **Library** (`F10`), grouped and scrollable:
   - **Classical** (35): Für Elise, Clair de lune, the Gymnopédies, Bach, Chopin, Mozart, Satie, Schumann…
   - **Ragtime** (4): Joplin, including an easy version of The Entertainer.
-  - **Movie & game themes** (6) and **Pop & rock** (3): arranged for piano, with the tune in the
+  - **Doki Doki Literature Club** (17): the game's soundtrack and fan songs (piano arrangements
+    with their own right- and left-hand parts).
+  - **Movie themes** (5) and **Pop & rock** (2): arranged for piano, with the tune in the
     right hand and the bass line in the left.
   - **Chopin's Nocturnes Op. 9** (all three), read from a scanned PDF.
 - Right hand is teal, left hand amber. Each hand has its own switch: **You** (you play it),
