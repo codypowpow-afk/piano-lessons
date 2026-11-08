@@ -111,16 +111,17 @@ type Game struct {
 	player *audio.Player
 	midiIn midiin.Input
 
-	lib      []*LibEntry
-	entry    *LibEntry
-	piece    int
-	lesson   *lesson.Lesson
-	preset   int
-	showLib  bool
-	libHover int
-	names    bool
-	ppb      float64 // pixels per beat in the waterfall
-	pctTempo float64
+	lib       []*LibEntry
+	entry     *LibEntry
+	piece     int
+	lesson    *lesson.Lesson
+	preset    int
+	showLib   bool
+	libHover  int
+	libScroll float64
+	names     bool
+	ppb       float64 // pixels per beat in the waterfall
+	pctTempo  float64
 
 	base    int
 	held    map[ebiten.Key]int
@@ -501,8 +502,23 @@ func (g *Game) keys() {
 		g.openDialog()
 		return
 	}
-	if g.showLib && jp(ebiten.KeyEscape) {
-		g.showLib = false
+	if g.showLib {
+		switch {
+		case jp(ebiten.KeyEscape), jp(ebiten.KeyF10):
+			g.showLib = false
+		case jp(ebiten.KeyArrowUp):
+			g.scrollLib(-libRowH)
+		case jp(ebiten.KeyArrowDown):
+			g.scrollLib(libRowH)
+		case jp(ebiten.KeyPageUp):
+			g.scrollLib(-libViewH + libRowH)
+		case jp(ebiten.KeyPageDown):
+			g.scrollLib(libViewH - libRowH)
+		case jp(ebiten.KeyHome):
+			g.scrollLib(-1e9)
+		case jp(ebiten.KeyEnd):
+			g.scrollLib(1e9)
+		}
 		return
 	}
 	if l != nil {
@@ -542,7 +558,7 @@ func (g *Game) keys() {
 		case jp(ebiten.KeyF9):
 			g.names = !g.names
 		case jp(ebiten.KeyF10):
-			g.showLib = !g.showLib
+			g.toggleLib()
 		case jp(ebiten.KeyMinus):
 			g.ppb = math.Max(40, g.ppb/1.15)
 		case jp(ebiten.KeyEqual) && ctrl:
@@ -631,24 +647,31 @@ func (g *Game) mouse() {
 	pressed := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft)
 	if g.showLib {
 		g.libHover = -1
-		lx, ly, lw := float32(330), float32(150), float32(740)
-		for i := range g.lib {
-			ry := ly + 70 + float32(i)*44
-			if inRect(x, y, lx+20, ry, lw-40, 40) {
+		if _, wy := ebiten.Wheel(); wy != 0 {
+			g.scrollLib(-wy * 70)
+		}
+		rows := libRows(g.lib)
+		for i, r := range rows {
+			ry := libTop + float32(float64(i*libRowH)-g.libScroll)
+			if r.entry == nil || ry < libTop-1 || ry+libRowH > libTop+libViewH+1 {
+				continue
+			}
+			if inRect(x, y, libX+20, ry, libW-40, libRowH-4) {
 				g.libHover = i
 				if pressed {
-					g.openEntry(g.lib[i], 0)
+					g.openEntry(r.entry, r.piece)
+					return
 				}
 			}
 		}
 		if pressed {
 			for _, b := range g.ui {
-				if inRect(x, y, b.x, b.y, b.w, b.h) && b.act != nil && b.label == "Open file…" {
+				if inRect(x, y, b.x, b.y, b.w, b.h) && b.act != nil && (b.label == "Open file…" || b.label == "Library (F10)") {
 					b.act()
 					return
 				}
 			}
-			if !inRect(x, y, lx, ly, lw, float32(110+44*len(g.lib))) {
+			if !inRect(x, y, libX, libY, libW, libH) {
 				g.showLib = false
 			}
 		}
@@ -709,7 +732,7 @@ func (g *Game) buildUI() {
 	// top bar
 	right := float32(screenW - 24)
 	add(right-120, 120, barY+6, "Open file…", false, g.openDialog)
-	add(right-250, 122, barY+6, "Library (F10)", g.showLib, func() { g.showLib = !g.showLib })
+	add(right-250, 122, barY+6, "Library (F10)", g.showLib, g.toggleLib)
 	add(right-380, 122, barY+6, "Export MIDI", false, g.exportMIDI)
 	if g.entry != nil && len(g.entry.Songs) > 1 {
 		add(right-560, 32, barY+6, "◄", false, func() { g.openEntry(g.entry, (g.piece+len(g.entry.Songs)-1)%len(g.entry.Songs)) })
@@ -1060,33 +1083,79 @@ func (g *Game) drawStatus(screen *ebiten.Image) {
 	g.drawText(screen, help, g.faceSmall, screenW/2, y+22, colDim, text.AlignCenter)
 }
 
+// library panel layout
+const (
+	libX, libY, libW, libH = float32(330), float32(64), float32(740), float32(760)
+	libTop                 = libY + 76
+	libViewH               = 664
+	libRowH                = 34
+)
+
+func (g *Game) toggleLib() {
+	if g.showLib {
+		g.showLib = false
+		return
+	}
+	g.showLib = true
+	// start with the piece that is open in view
+	for i, r := range libRows(g.lib) {
+		if r.entry != nil && r.entry == g.entry && (r.piece == g.piece || !r.entry.Builtin) {
+			g.libScroll = float64(i*libRowH) - libViewH/3
+			break
+		}
+	}
+	g.scrollLib(0)
+}
+
+func (g *Game) scrollLib(d float64) {
+	maxS := math.Max(0, float64(len(libRows(g.lib))*libRowH-libViewH))
+	g.libScroll = math.Max(0, math.Min(maxS, g.libScroll+d))
+}
+
 func (g *Game) drawLibrary(screen *ebiten.Image) {
-	lx, ly, lw := float32(330), float32(150), float32(740)
-	lh := float32(110 + 44*len(g.lib))
 	vector.DrawFilledRect(screen, 0, 0, screenW, screenH, color.RGBA{0, 0, 0, 0x90}, false)
-	rect(screen, lx, ly, lw, lh, colPanel)
-	g.drawText(screen, "Library", g.faceTitle, float64(lx+20), float64(ly+18), colText, text.AlignStart)
-	g.drawText(screen, "Drop a PDF, page images, MIDI or MusicXML onto the window to add music", g.face, float64(lx+20), float64(ly+46), colDim, text.AlignStart)
-	for i, e := range g.lib {
-		ry := ly + 70 + float32(i)*44
-		c := colPanelHi
+	rect(screen, libX, libY, libW, libH, colPanel)
+	g.drawText(screen, "Library", g.faceTitle, float64(libX+20), float64(libY+18), colText, text.AlignStart)
+	g.drawText(screen, "Drop a PDF, page images, MIDI or MusicXML onto the window to add music", g.face, float64(libX+20), float64(libY+48), colDim, text.AlignStart)
+	rows := libRows(g.lib)
+	view := screen.SubImage(image.Rect(int(libX), int(libTop), int(libX+libW), int(libTop+libViewH))).(*ebiten.Image)
+	for i, r := range rows {
+		ry := libTop + float32(float64(i*libRowH)-g.libScroll)
+		if ry+libRowH < libTop || ry > libTop+libViewH {
+			continue
+		}
+		if r.entry == nil {
+			g.drawText(view, strings.ToUpper(r.head), g.faceBold, float64(libX+24), float64(ry+12), colAccent, text.AlignStart)
+			if r.info != "" {
+				g.drawText(view, r.info+" pieces", g.face, float64(libX+libW-34), float64(ry+12), colDim, text.AlignEnd)
+			}
+			continue
+		}
+		cur := r.entry == g.entry && (r.piece == g.piece || !r.entry.Builtin)
+		c, tc := colPanelHi, colText
 		if i == g.libHover {
-			c = colAccent
+			c, tc = colAccent, colBG
 		}
-		rect(screen, lx+20, ry, lw-40, 40, c)
-		tc := colText
-		if i == g.libHover {
-			tc = colBG
+		rect(view, libX+20, ry, libW-40, libRowH-4, c)
+		if cur {
+			rect(view, libX+20, ry, 5, libRowH-4, colAccent)
 		}
-		g.drawText(screen, e.Title, g.faceBold, float64(lx+34), float64(ry+12), tc, text.AlignStart)
-		info := fmt.Sprintf("%d piece", len(e.Songs))
-		if len(e.Songs) != 1 {
-			info += "s"
+		g.drawText(view, r.title(), g.faceBold, float64(libX+36), float64(ry+8), tc, text.AlignStart)
+		info := r.info
+		if r.entry.Builtin {
+			if s := r.entry.Songs[r.piece]; len(s.Notes) > 0 {
+				info = fmt.Sprintf("%d notes", len(s.Notes))
+			}
 		}
-		if e.Builtin {
-			info += " · built in"
-		}
-		g.drawText(screen, info, g.face, float64(lx+lw-34), float64(ry+12), tc, text.AlignEnd)
+		g.drawText(view, info, g.face, float64(libX+libW-34), float64(ry+8), tc, text.AlignEnd)
+	}
+	// scrollbar
+	total := float32(len(rows) * libRowH)
+	if total > libViewH {
+		h := libViewH * libViewH / total
+		y := libTop + float32(g.libScroll)/(total-libViewH)*(libViewH-h)
+		rect(screen, libX+libW-12, libTop, 4, libViewH, colPanelHi)
+		rect(screen, libX+libW-12, y, 4, h, colDim)
 	}
 }
 

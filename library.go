@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,33 @@ import (
 
 //go:embed sample/chopin_op9.json
 var sampleJSON []byte
+
+// presetsGz is the built-in song collection, made from presets/midi by
+// tools/presets.
+//
+//go:embed presets/songs.json.gz
+var presetsGz []byte
+
+func loadPresets() []*LibEntry {
+	zr, err := gzip.NewReader(bytes.NewReader(presetsGz))
+	if err != nil {
+		return nil
+	}
+	var cats []struct {
+		Category string        `json:"category"`
+		Songs    []*score.Song `json:"songs"`
+	}
+	if err := json.NewDecoder(zr).Decode(&cats); err != nil {
+		return nil
+	}
+	var out []*LibEntry
+	for _, c := range cats {
+		if len(c.Songs) > 0 {
+			out = append(out, &LibEntry{Title: c.Category, Builtin: true, Songs: c.Songs})
+		}
+	}
+	return out
+}
 
 // LibEntry is one document in the song library (it may hold several pieces).
 type LibEntry struct {
@@ -48,12 +76,13 @@ func exportDir() string {
 	return filepath.Join(h, "Documents", "Piano Lessons")
 }
 
-// loadLibrary returns the built-in sample plus previously imported songs.
+// loadLibrary returns the built-in songs plus previously imported ones.
 func loadLibrary() []*LibEntry {
 	var out []*LibEntry
 	if songs, err := score.LoadJSON(sampleJSON); err == nil {
-		out = append(out, &LibEntry{Title: "Chopin — Nocturnes Op. 9 (sample)", Builtin: true, Songs: songs})
+		out = append(out, &LibEntry{Title: "Chopin — Nocturnes Op. 9, read from a scanned PDF", Builtin: true, Songs: songs})
 	}
+	out = append(out, loadPresets()...)
 	files, _ := filepath.Glob(filepath.Join(libDir(), "*.json"))
 	sort.Strings(files)
 	for _, f := range files {
@@ -241,4 +270,48 @@ func readDropped(fsys fs.FS) []inFile {
 		}
 	}
 	return out
+}
+
+// libRow is one line of the library list: a heading or a piece to open.
+type libRow struct {
+	head  string
+	info  string
+	entry *LibEntry
+	piece int
+}
+
+// libRows lays out the library: each built-in collection under its own
+// heading, then the music the user added.
+func libRows(lib []*LibEntry) []libRow {
+	var rows []libRow
+	user := false
+	for _, e := range lib {
+		if !e.Builtin {
+			if !user {
+				rows = append(rows, libRow{head: "Your music"})
+				user = true
+			}
+			info := ""
+			if len(e.Songs) > 1 {
+				info = fmt.Sprintf("%d pieces", len(e.Songs))
+			}
+			rows = append(rows, libRow{entry: e, info: info})
+			continue
+		}
+		rows = append(rows, libRow{head: e.Title, info: fmt.Sprintf("%d", len(e.Songs))})
+		for i := range e.Songs {
+			rows = append(rows, libRow{entry: e, piece: i})
+		}
+	}
+	return rows
+}
+
+func (r libRow) title() string {
+	if r.entry == nil {
+		return r.head
+	}
+	if r.entry.Builtin || len(r.entry.Songs) > 1 && r.piece > 0 {
+		return r.entry.Songs[r.piece].Title
+	}
+	return r.entry.Title
 }

@@ -42,6 +42,8 @@ library.go                  Import dispatch by file type, library folder, embedd
 dialog_windows.go           Native Open dialog (comdlg32 GetOpenFileNameW, no cgo)
 dialog_other.go             No dialog elsewhere (drag and drop still works)
 sample/chopin_op9.json           The three Op. 9 nocturnes as read from the scan
+presets/midi/                    Source MIDI files of the built-in songs
+presets/songs.json.gz            Built-in songs (made by tools/presets, embedded in the exe)
 rsrc_windows_amd64.syso          Icon + version info ("Piano Lessons")
 internal/lesson/            Lesson state machine (wait mode, steps, auto-play, loop, scoring) + tests
 internal/midiin/            The winmm MIDI input (copied from Piano Player)
@@ -56,6 +58,7 @@ omr/recognize.go            Clefs, key signatures, noteheads, stems, barlines, a
 omr/ottava.go               "8 . . . . loco" detection
 omr/ensemble.go             Thorough mode: several passes per page + voting
 omr/build.go                Pages -> systems -> pieces -> measures -> timed notes
+tools/presets/              Builds presets/songs.json.gz (song list, titles, band-to-piano arranging)
 tools/sheet2song/           CLI: PDF -> songs JSON, prints the first bars of each piece
 tools/omrdebug/             CLI: draws everything the reader found on one page into a PNG
 tools/winres/               Regenerates rsrc_windows_amd64.syso
@@ -73,6 +76,22 @@ song.Steps(handMask, eps)   // notes grouped by onset = what the learner must pr
 ```
 Times are in beats (quarter notes). For OMR songs every bar is 4 "beats" (the time signature
 is not read), so the tempo is "bars feel"; MIDI/MusicXML keep their real meter and tempo.
+MIDI tempo changes (since 1.4) are folded into the note times: a song keeps one tempo (the
+opening one) and later passages are stretched or squeezed, so playback matches the file.
+
+### Built-in songs (1.4)
+`go run ./tools/presets` turns `presets/midi/*.mid` into `presets/songs.json.gz` (about 280 KB,
+43,000 notes), loaded by `library.go` as one library entry per category. The list, the titles
+and the categories are in `tools/presets/main.go`.
+- **Piano files** (one track per hand) are used as they are.
+- **Band / orchestra files** are arranged for two hands: the listed melody tracks become the
+  right hand and the bass tracks the left. Tracks are in priority order and chosen per bar, so
+  the tune follows whichever instrument has it; only the top (right) or bottom (left) note of
+  each onset is kept, and each track is moved by octaves to a comfortable range.
+- **Performance recordings** (most of the classical files: timed in seconds, no grid) have
+  their chord notes lined up (within 45 ms) so Wait mode asks for a chord, not a ripple of
+  single notes. Their "bars" are every 4 seconds, not the score's bars; the song's source line
+  says so.
 
 ---
 

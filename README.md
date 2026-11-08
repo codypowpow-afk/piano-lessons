@@ -15,7 +15,12 @@ and it turns the notes into **falling blocks that land on the keys you need to p
     results are voted on, for accuracy; small cue notes (cadenzas, grace runs) are found on the
     full-resolution scan. A 12-page score takes about 30–40 s.
   - **MIDI** and **MusicXML (.musicxml / .mxl)**: exact, use these when you have them.
-- Comes with **Chopin's Nocturnes Op. 9** (all three), read from a scanned PDF.
+- Comes with **51 built-in songs** in the **Library** (`F10`), grouped and scrollable:
+  - **Classical** (35): Für Elise, Clair de lune, the Gymnopédies, Bach, Chopin, Mozart, Satie, Schumann…
+  - **Ragtime** (4): Joplin, including an easy version of The Entertainer.
+  - **Movie & game themes** (6) and **Pop & rock** (3): arranged for piano, with the tune in the
+    right hand and the bass line in the left.
+  - **Chopin's Nocturnes Op. 9** (all three), read from a scanned PDF.
 - Right hand is teal, left hand amber. Each hand has its own switch: **You** (you play it),
   **Auto** (the app plays it) or **Off** (silent), so you can learn the melody and the chords
   separately. Loop 1–8 bars, slow the tempo down, or press **Listen** to hear the piece.
@@ -51,6 +56,7 @@ GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -H=windowsgui" -o d
 go test ./internal/lesson ./score ./omr
 go run ./tools/sheet2song -show 8 score.pdf      # read a PDF from the command line
 go run ./tools/omrdebug -o page.png score.pdf 5  # draw what the reader found on page 5
+go run ./tools/presets                           # rebuild the built-in songs from presets/midi
 ```
 
 The piano sound (sampler engine and samples) comes from the

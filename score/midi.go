@@ -32,7 +32,11 @@ func ReadMIDI(data []byte, title string) (*Song, error) {
 	var evs []ev
 	type tsig struct{ tick, num, den int }
 	var sigs []tsig
-	tempo := 0.0
+	type tchange struct {
+		tick int
+		bpm  float64
+	}
+	var tempos []tchange
 	trackNotes := map[int]int{}
 	for t := 0; t < ntrk && pos+8 <= len(data); t++ {
 		if string(data[pos:pos+4]) != "MTrk" {
@@ -81,9 +85,10 @@ func ReadMIDI(data []byte, title string) (*Song, error) {
 				i += l
 				switch typ {
 				case 0x51:
-					if len(d) == 3 && tempo == 0 {
-						us := int(d[0])<<16 | int(d[1])<<8 | int(d[2])
-						tempo = 60e6 / float64(us)
+					if len(d) == 3 {
+						if us := int(d[0])<<16 | int(d[1])<<8 | int(d[2]); us > 0 {
+							tempos = append(tempos, tchange{tick, 60e6 / float64(us)})
+						}
 					}
 				case 0x58:
 					if len(d) >= 2 {
@@ -161,8 +166,28 @@ func ReadMIDI(data []byte, title string) (*Song, error) {
 	}
 	sort.SliceStable(evs, func(i, j int) bool { return evs[i].tick < evs[j].tick })
 	s := &Song{Title: title, Tempo: 90, BeatsPer: 4, Source: "MIDI"}
-	if tempo > 0 {
-		s.Tempo = tempo
+	// Tempo changes are folded into the note times: a song has one tempo, so
+	// times are measured in beats of the opening tempo and a later slower
+	// passage simply has longer notes. Playback timing matches the file.
+	sort.SliceStable(tempos, func(i, j int) bool { return tempos[i].tick < tempos[j].tick })
+	base := 0.0
+	if len(tempos) > 0 {
+		base = tempos[0].bpm
+		s.Tempo = base
+	}
+	beatAt := func(tick int) float64 {
+		if base == 0 {
+			return float64(tick) / float64(div)
+		}
+		b, last, bpm := 0.0, 0, 120.0
+		for _, tc := range tempos {
+			if tc.tick >= tick {
+				break
+			}
+			b += float64(tc.tick-last) / float64(div) * base / bpm
+			last, bpm = tc.tick, tc.bpm
+		}
+		return b + float64(tick-last)/float64(div)*base/bpm
 	}
 	type key struct{ p, tr, ch int }
 	open := map[key][]ev{}
@@ -186,8 +211,8 @@ func ReadMIDI(data []byte, title string) (*Song, error) {
 				}
 			}
 			s.Notes = append(s.Notes, Note{
-				Pitch: on.pitch, Start: float64(on.tick) / float64(div),
-				Dur: float64(e.tick-on.tick) / float64(div), Hand: h, Vel: float64(on.vel) / 127,
+				Pitch: on.pitch, Start: beatAt(on.tick),
+				Dur: beatAt(e.tick) - beatAt(on.tick), Hand: h, Vel: float64(on.vel) / 127,
 			})
 		}
 	}
@@ -198,13 +223,17 @@ func ReadMIDI(data []byte, title string) (*Song, error) {
 	s.BeatsPer = float64(sigs[0].num) * 4 / float64(sigs[0].den)
 	s.Sort()
 	end := s.End()
-	t, si := 0.0, 0
-	for t < end+1e-9 {
-		for si+1 < len(sigs) && float64(sigs[si+1].tick)/float64(div) <= t+1e-9 {
+	tick, si := 0, 0
+	for beatAt(tick) < end+1e-9 {
+		for si+1 < len(sigs) && sigs[si+1].tick <= tick {
 			si++
 		}
-		s.Measures = append(s.Measures, t)
-		t += float64(sigs[si].num) * 4 / float64(sigs[si].den)
+		s.Measures = append(s.Measures, beatAt(tick))
+		step := sigs[si].num * 4 * div / sigs[si].den
+		if step <= 0 {
+			step = 4 * div
+		}
+		tick += step
 	}
 	for i := range s.Notes {
 		s.Notes[i].Measure = s.MeasureAt(s.Notes[i].Start)
